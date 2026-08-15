@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data & checkpoints — keep the repo light, track configs/results not weights
+data/*.bin
+data/*.txt
+results/checkpoints/*.pt
+*.pt
+*.ckpt
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Figures can get large; keep small final ones, ignore scratch
+results/figures/scratch_*.png
+
+# Editors
+.vscode/
+.idea/

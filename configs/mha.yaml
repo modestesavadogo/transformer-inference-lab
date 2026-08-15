@@ -1,0 +1,21 @@
+# MHA baseline — Hq = Hkv = n_head
+model:
+  vocab_size: 50257   # set to your actual tokenizer vocab size
+  n_layer: 6
+  n_embd: 384
+  n_head: 8
+  n_kv_head: 8
+  block_size: 1024
+  dropout: 0.0
+
+train:
+  # Keep every field below IDENTICAL across mha.yaml / gqa.yaml / mqa.yaml.
+  # The only line that should differ between the three configs is n_kv_head.
+  seed: 1337
+  max_iters: 5000        # set from your speedrun token budget
+  batch_size: 64
+  learning_rate: 6.0e-4
+  weight_decay: 0.1
+  warmup_iters: 200
+  dataset: data/train.bin
+  val_dataset: data/val.bin
