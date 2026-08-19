@@ -27,7 +27,7 @@ real GPU before committing to full runs.
 
 
 
-## 2026-08-20 — Day 3: sanity run on Kaggle T4 (fixed)
+## 2026-08-19 — Day 3: sanity run on Kaggle T4 (fixed)
 
 **Did:** Fixed OOM via gradient accumulation (batch_size 64 -> micro-batch 8
 x grad_accum_steps 8, same effective batch size). Re-ran 30-iter sanity
@@ -68,4 +68,25 @@ for MHA/GQA/MQA runs.
 
 **Next:** re-verify token counts with fixed links, then launch MHA
 training as Save & Run All commit.
+
+
+
+
+## 2026-08-19 — MHA checkpoint finalized
+
+**Did:** Backfilled val_loss on mha.pt via one-off eval (train.py's final
+save omitted it due to the loop-boundary bug). Uploaded mha.pt as a
+Kaggle Dataset (transformer-inference-lab-checkpoints) for reuse across
+future sessions.
+
+**Measured:** MHA final val_loss = 5.6314 (eval_iters=50), down from
+6.24 at iter 2000 — model was still improving through iter 5000, not
+plateaued.
+
+**Decision:** MHA baseline locked in. train.py fix (final checkpoint
+now computes val_loss automatically) already committed — GQA/MQA runs
+won't need this manual backfill step.
+
+**Next:** launch GQA training (configs/gqa.yaml), same notebook
+structure, same data Input, checkpoint output to gqa.pt.
 ---
