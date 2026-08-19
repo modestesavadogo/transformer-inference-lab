@@ -16,6 +16,10 @@ three runs, for no benefit to the research question.
 fp16 AMP + GradScaler chosen over bf16 for T4/P100 compatibility, same
 reasoning as the speedrun.
 
+Uses gradient accumulation: batch_size is the per-step micro-batch that
+fits in T4 memory, grad_accum_steps multiplies it back up to the intended
+effective batch size (see configs/*.yaml comments).
+
 Usage:
     python train.py --config configs/mha.yaml
     python train.py --config configs/gqa.yaml
@@ -116,7 +120,7 @@ def main():
         start_iter = ckpt["iter"] + 1
         print(f"resumed from {args.resume} at iter {start_iter}")
 
-        checkpoint_name = Path(args.config).stem  # mha / gqa / mqa
+    checkpoint_name = Path(args.config).stem  # mha / gqa / mqa
     checkpoint_path = Path("results/checkpoints") / f"{checkpoint_name}.pt"
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -151,6 +155,7 @@ def main():
         if it % args.log_interval == 0:
             dt = time.time() - t0
             print(f"iter {it:5d} | loss {accum_loss:.4f} | lr {lr:.2e} | {dt*1000/max(it-start_iter,1):.1f}ms/it")
+
         if it % args.eval_interval == 0 and it > start_iter:
             val_loss = estimate_val_loss(model, os.path.dirname(train_cfg["dataset"]),
                                           model_cfg.block_size, train_cfg["batch_size"], device)
