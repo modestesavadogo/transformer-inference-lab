@@ -27,7 +27,7 @@ real GPU before committing to full runs.
 
 
 
-## 2026-08-19 — Day 2: sanity run on Kaggle T4 (fixed)
+## 2026-08-20 — Day 3: sanity run on Kaggle T4 (fixed)
 
 **Did:** Fixed OOM via gradient accumulation (batch_size 64 -> micro-batch 8
 x grad_accum_steps 8, same effective batch size). Re-ran 30-iter sanity
@@ -49,4 +49,23 @@ starting with MHA.
 expect ~2.8h. Monitor for session timeout (12h limit, not a concern
 for a single variant but worth checking Kaggle's autosave/commit
 behavior for long runs).
+
+
+
+## 2026-08-19 — Day 2: Kaggle dataset path fix
+
+**Did:** Fixed broken symlinks — Kaggle's actual mount path for a
+user-created dataset is /kaggle/input/datasets/<username>/<dataset-slug>/,
+not /kaggle/input/<dataset-slug>/ as initially assumed.
+
+**Issues:** ls -la on a symlink shows the link itself, not whether its
+target exists — silently masked the broken path until np.memmap actually
+tried to open the file. Added `test -f` checks after symlink creation
+going forward.
+
+**Decision:** corrected path locked into the training notebook template
+for MHA/GQA/MQA runs.
+
+**Next:** re-verify token counts with fixed links, then launch MHA
+training as Save & Run All commit.
 ---
