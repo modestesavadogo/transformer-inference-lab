@@ -3,6 +3,14 @@
 Project log for transformer-inference-lab. One entry per work session.
 Each entry: what I did, what I measured, what broke, what I decided.
 
+
+## Runs index
+
+| Date | Notebook | Git commit | Variant | Result |
+|---|---|---|---|---|
+| 2026-08-19 | mha-training | db649c6 | MHA | val_loss 5.6314, iter 5000 |
+
+---
 ---
 
 ## 2026-08-19 — Repo scaffold
