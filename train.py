@@ -170,14 +170,19 @@ def main():
             print(f"checkpoint saved to {checkpoint_path}")
 
     # final checkpoint
+    # final checkpoint — compute val_loss one last time so it's not lost
+    final_val_loss = estimate_val_loss(model, os.path.dirname(train_cfg["dataset"]),
+                                        model_cfg.block_size, train_cfg["batch_size"], device)
+    print(f"final val_loss: {final_val_loss:.4f}")
     torch.save({
         "iter": train_cfg["max_iters"],
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "config": cfg_dict["model"],
+        "val_loss": final_val_loss,
     }, checkpoint_path)
     print(f"training complete. final checkpoint: {checkpoint_path}")
-
+    
 
 if __name__ == "__main__":
     main()
