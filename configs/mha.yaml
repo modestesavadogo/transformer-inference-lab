@@ -13,7 +13,8 @@ train:
   # The only line that should differ between the three configs is n_kv_head.
   seed: 1337
   max_iters: 5000        # set from your speedrun token budget
-  batch_size: 64
+  batch_size: 8          # micro-batch, memory-bound on T4
+  grad_accum_steps: 8    # effective batch = 8 * 8 = 64, same as before
   learning_rate: 6.0e-4
   weight_decay: 0.1
   warmup_iters: 200

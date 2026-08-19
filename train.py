@@ -116,9 +116,11 @@ def main():
         start_iter = ckpt["iter"] + 1
         print(f"resumed from {args.resume} at iter {start_iter}")
 
-    checkpoint_name = Path(args.config).stem  # mha / gqa / mqa
+        checkpoint_name = Path(args.config).stem  # mha / gqa / mqa
     checkpoint_path = Path("results/checkpoints") / f"{checkpoint_name}.pt"
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    grad_accum_steps = train_cfg.get("grad_accum_steps", 1)
 
     model.train()
     t0 = time.time()
@@ -127,15 +129,20 @@ def main():
         for g in optimizer.param_groups:
             g["lr"] = lr
 
-        x, y = get_batch("train", os.path.dirname(train_cfg["dataset"]),
-                          model_cfg.block_size, train_cfg["batch_size"], device)
-
-        with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_amp):
-            logits, _ = model(x, kv_caches=None)
-            loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
-
         optimizer.zero_grad(set_to_none=True)
-        scaler.scale(loss).backward()
+        accum_loss = 0.0
+        for micro_step in range(grad_accum_steps):
+            x, y = get_batch("train", os.path.dirname(train_cfg["dataset"]),
+                              model_cfg.block_size, train_cfg["batch_size"], device)
+
+            with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_amp):
+                logits, _ = model(x, kv_caches=None)
+                loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+                loss = loss / grad_accum_steps
+
+            scaler.scale(loss).backward()
+            accum_loss += loss.item()
+
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         scaler.step(optimizer)
@@ -143,8 +150,7 @@ def main():
 
         if it % args.log_interval == 0:
             dt = time.time() - t0
-            print(f"iter {it:5d} | loss {loss.item():.4f} | lr {lr:.2e} | {dt*1000/max(it-start_iter,1):.1f}ms/it")
-
+            print(f"iter {it:5d} | loss {accum_loss:.4f} | lr {lr:.2e} | {dt*1000/max(it-start_iter,1):.1f}ms/it")
         if it % args.eval_interval == 0 and it > start_iter:
             val_loss = estimate_val_loss(model, os.path.dirname(train_cfg["dataset"]),
                                           model_cfg.block_size, train_cfg["batch_size"], device)
