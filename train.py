@@ -128,3 +128,45 @@ def main():
             g["lr"] = lr
 
         x, y = get_batch("train", os.path.dirname(train_cfg["dataset"]),
+                          model_cfg.block_size, train_cfg["batch_size"], device)
+
+        with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_amp):
+            logits, _ = model(x, kv_caches=None)
+            loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+
+        optimizer.zero_grad(set_to_none=True)
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        scaler.step(optimizer)
+        scaler.update()
+
+        if it % args.log_interval == 0:
+            dt = time.time() - t0
+            print(f"iter {it:5d} | loss {loss.item():.4f} | lr {lr:.2e} | {dt*1000/max(it-start_iter,1):.1f}ms/it")
+
+        if it % args.eval_interval == 0 and it > start_iter:
+            val_loss = estimate_val_loss(model, os.path.dirname(train_cfg["dataset"]),
+                                          model_cfg.block_size, train_cfg["batch_size"], device)
+            print(f"iter {it:5d} | val_loss {val_loss:.4f}")
+            torch.save({
+                "iter": it,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "config": cfg_dict["model"],
+                "val_loss": val_loss,
+            }, checkpoint_path)
+            print(f"checkpoint saved to {checkpoint_path}")
+
+    # final checkpoint
+    torch.save({
+        "iter": train_cfg["max_iters"],
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "config": cfg_dict["model"],
+    }, checkpoint_path)
+    print(f"training complete. final checkpoint: {checkpoint_path}")
+
+
+if __name__ == "__main__":
+    main()
