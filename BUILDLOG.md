@@ -97,4 +97,60 @@ won't need this manual backfill step.
 
 **Next:** launch GQA training (configs/gqa.yaml), same notebook
 structure, same data Input, checkpoint output to gqa.pt.
+
+
+
+
+| 2026-08-19 | gqa-training (labeled mqa-training, content is GQA — see note) | 2bc3275 | GQA | val_loss 5.7637, iter 5000 |
+
+
+
+## 2026-08-19 — GQA training complete
+
+**Did:** Full GQA training run (5000 iters, n_kv_head=2) on Kaggle T4.
+Notebook file was misnamed "mqa-training" but content/config was
+unchanged from the GQA notebook — confirmed via cell 10 output
+(configs/gqa.yaml, n_kv_head: 2) and cell 14/16 (checkpoint gqa.pt).
+
+**Measured:** GQA val_loss 5.7637 at iter 5000, vs MHA's 5.6314 —
+GQA slightly higher loss than MHA, consistent with expectation (fewer
+KV heads costs a small amount of quality). ~1.77s/it steady state.
+
+**Issues:** notebook naming/content mismatch — renamed file without
+updating content. Real MQA run still pending.
+
+**Next:** build and run the actual MQA notebook (n_kv_head=1,
+configs/mqa.yaml) — take care this time that the notebook content
+matches its filename.
+
+
+| 2026-08-20 | mqa-training | 2bc3275 | MQA | val_loss 5.6856, iter 5000 |
+
+
+## 2026-08-20 — MQA training complete, all three variants done
+
+**Did:** Full MQA training run (5000 iters, n_kv_head=1) on Kaggle T4.
+Config and checkpoint verified as genuinely MQA via explicit n_kv_head
+assertions (added after the GQA mislabeling incident) — both passed.
+
+**Measured:** MQA val_loss 5.6856 at iter 5000. Final comparison across
+all three variants:
+  MHA (n_kv_head=8): 5.6314
+  MQA (n_kv_head=1): 5.6856
+  GQA (n_kv_head=2): 5.7637
+
+**Issues:** none in execution. Notable result: GQA has the highest
+(worst) val_loss of the three, not MQA — opposite of naive expectation.
+Likely training noise at this short budget/single seed rather than a
+real architectural effect; flagging as a limitation to state explicitly
+in 06 — Analysis rather than overclaiming a trend.
+
+**Decision:** proceeding to benchmarks (latency/memory/throughput) with
+all three checkpoints as-is rather than rerunning with multiple seeds —
+that's a possible follow-up if time allows, not blocking the memory/
+latency measurements which are the primary focus.
+
+**Next:** run benchmarks/latency.py, memory.py, throughput.py against
+all three checkpoints. This is where the actual memory-latency axis of
+the triangle gets real numbers.
 ---
