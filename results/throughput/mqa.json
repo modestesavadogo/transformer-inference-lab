@@ -1,0 +1,49 @@
+{
+  "attention": "mqa",
+  "kv_heads": 1,
+  "context_length": 512,
+  "sweep": [
+    {
+      "batch_size": 1,
+      "tokens_per_sec": 96.50349705605402,
+      "elapsed_s": 0.6631884019998324,
+      "kv_cache_bytes": 663552,
+      "oom": false
+    },
+    {
+      "batch_size": 4,
+      "tokens_per_sec": 689.3306020650326,
+      "elapsed_s": 0.3713747790002344,
+      "kv_cache_bytes": 2654208,
+      "oom": false
+    },
+    {
+      "batch_size": 8,
+      "tokens_per_sec": 1348.753651391029,
+      "elapsed_s": 0.37960972300015783,
+      "kv_cache_bytes": 5308416,
+      "oom": false
+    },
+    {
+      "batch_size": 16,
+      "tokens_per_sec": 2298.540433784923,
+      "elapsed_s": 0.44550010299963105,
+      "kv_cache_bytes": 10616832,
+      "oom": false
+    },
+    {
+      "batch_size": 32,
+      "tokens_per_sec": 3484.1372030629304,
+      "elapsed_s": 0.5878069320001487,
+      "kv_cache_bytes": 21233664,
+      "oom": false
+    },
+    {
+      "batch_size": 64,
+      "tokens_per_sec": 3830.105711852922,
+      "elapsed_s": 1.0694221799999468,
+      "kv_cache_bytes": 42467328,
+      "oom": false
+    }
+  ]
+}

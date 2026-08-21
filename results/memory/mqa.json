@@ -1,0 +1,24 @@
+{
+  "attention": "mqa",
+  "kv_heads": 1,
+  "results": [
+    {
+      "context_length": 256,
+      "theoretical_kv_cache_bytes": 368640,
+      "measured_kv_cache_bytes": 368640,
+      "peak_gpu_memory_bytes": 178134016
+    },
+    {
+      "context_length": 512,
+      "theoretical_kv_cache_bytes": 663552,
+      "measured_kv_cache_bytes": 663552,
+      "peak_gpu_memory_bytes": 231075840
+    },
+    {
+      "context_length": 768,
+      "theoretical_kv_cache_bytes": 958464,
+      "measured_kv_cache_bytes": 958464,
+      "peak_gpu_memory_bytes": 284817408
+    }
+  ]
+}

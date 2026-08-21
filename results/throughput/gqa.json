@@ -1,0 +1,49 @@
+{
+  "attention": "gqa",
+  "kv_heads": 2,
+  "context_length": 512,
+  "sweep": [
+    {
+      "batch_size": 1,
+      "tokens_per_sec": 96.96290868459911,
+      "elapsed_s": 0.6600462060000609,
+      "kv_cache_bytes": 1327104,
+      "oom": false
+    },
+    {
+      "batch_size": 4,
+      "tokens_per_sec": 647.9230853341537,
+      "elapsed_s": 0.39510862599991015,
+      "kv_cache_bytes": 5308416,
+      "oom": false
+    },
+    {
+      "batch_size": 8,
+      "tokens_per_sec": 1219.8974954909431,
+      "elapsed_s": 0.4197073950003869,
+      "kv_cache_bytes": 10616832,
+      "oom": false
+    },
+    {
+      "batch_size": 16,
+      "tokens_per_sec": 2068.497168691883,
+      "elapsed_s": 0.4950453960000232,
+      "kv_cache_bytes": 21233664,
+      "oom": false
+    },
+    {
+      "batch_size": 32,
+      "tokens_per_sec": 2319.0375088456617,
+      "elapsed_s": 0.883125000000291,
+      "kv_cache_bytes": 42467328,
+      "oom": false
+    },
+    {
+      "batch_size": 64,
+      "tokens_per_sec": 2334.7003589131455,
+      "elapsed_s": 1.7544007239998791,
+      "kv_cache_bytes": 84934656,
+      "oom": false
+    }
+  ]
+}
