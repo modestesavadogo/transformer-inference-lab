@@ -71,16 +71,14 @@ class GPT(nn.Module):
         self.tok_emb.weight = self.head.weight
 
     def forward(self, idx: torch.Tensor, kv_caches=None, pos_offset: int = 0):
-        """
-        idx: (B, T) token ids.
-        kv_caches: optional list of (k_cache, v_cache) tuples, one per layer,
-                   already-filled portion only (see cache.py .get()).
-        pos_offset: needed for incremental decoding so position embeddings
-                    continue correctly past the cached prefix.
-
-        Returns: logits (B, T, vocab_size), new_kv_caches (list of (k, v))
-        """
         B, T = idx.shape
+        if pos_offset + T > self.cfg.block_size:
+            raise ValueError(
+                f"Position {pos_offset + T - 1} exceeds block_size={self.cfg.block_size}. "
+                f"This model supports at most {self.cfg.block_size} tokens total "
+                f"(prompt + generated). Reduce context_length or max_new_tokens so "
+                f"their sum stays within block_size."
+            )
         pos = torch.arange(pos_offset, pos_offset + T, device=idx.device)
         x = self.drop(self.tok_emb(idx) + self.pos_emb(pos)[None, :, :])
 
