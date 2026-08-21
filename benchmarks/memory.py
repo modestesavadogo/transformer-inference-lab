@@ -9,6 +9,13 @@ Usage:
         --context-lengths 512,1024,2048,4096 --checkpoint results/checkpoints/gqa.pt
 """
 
+
+# NOTE: context_length + max_new_tokens must not exceed the model's
+# block_size (1024 for these checkpoints) — positions beyond block_size
+# don't exist in the position embedding table and will trigger a CUDA
+# device-side assert that poisons the CUDA context for the rest of the
+# process (requiring a kernel restart, not just a retry).
+
 import argparse
 import json
 from pathlib import Path
