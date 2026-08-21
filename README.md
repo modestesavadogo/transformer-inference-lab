@@ -92,41 +92,41 @@ GQA does not show this effect at any batch size tested, despite having a 4× sma
 
 ## Repo structure
 
+```
 transformer-inference-lab/
-├── train.py # training loop (AdamW + cosine schedule)
-├── prepare_data.py # FineWeb-Edu streaming + tokenization
-├── BUILDLOG.md # session-by-session project history
+├── train.py                    # training loop (AdamW + cosine schedule)
+├── prepare_data.py             # FineWeb-Edu streaming + tokenization
+├── BUILDLOG.md                 # session-by-session project history
 ├── src/
-│ ├── model/
-│ │ ├── attention.py # MHA/GQA/MQA as one parameterized module
-│ │ ├── transformer.py # GPT wrapper, nanoGPT-speedrun-adjacent
-│ │ └── cache.py # KV cache storage/bookkeeping only
-│ └── inference/
-│ ├── naive.py # no-cache baseline
-│ ├── kv_cache.py # prefill + incremental decode with cache
-│ └── generation.py # shared sampling utils, perplexity eval
+│   ├── model/
+│   │   ├── attention.py        # MHA/GQA/MQA as one parameterized module
+│   │   ├── transformer.py      # GPT wrapper, nanoGPT-speedrun-adjacent
+│   │   └── cache.py            # KV cache storage/bookkeeping only
+│   └── inference/
+│       ├── naive.py            # no-cache baseline
+│       ├── kv_cache.py         # prefill + incremental decode with cache
+│       └── generation.py       # shared sampling utils, perplexity eval
 ├── experiments/
-│ ├── kv_cache/
-│ ├── mha_mqa_gqa/
-│ └── context_length/
+│   ├── kv_cache/
+│   ├── mha_mqa_gqa/
+│   └── context_length/
 ├── benchmarks/
-│ ├── latency.py
-│ ├── throughput.py
-│ └── memory.py
+│   ├── latency.py
+│   ├── throughput.py
+│   └── memory.py
 ├── analysis/
-│ └── plots.py # generates results/figures/*.png from JSON
-├── configs/ # mha.yaml / gqa.yaml / mqa.yaml — identical
-│ # except n_kv_head
+│   └── plots.py                # generates results/figures/*.png from JSON
+├── configs/                     # mha.yaml, gqa.yaml, mqa.yaml (identical except n_kv_head)
 ├── results/
-│ ├── checkpoints/ # gitignored — too large for git
-│ ├── latency/ # JSON benchmark outputs (committed)
-│ ├── memory/ # JSON benchmark outputs (committed)
-│ ├── throughput/ # JSON benchmark outputs (committed)
-│ └── figures/ # PNG plots generated from the JSON above
+│   ├── checkpoints/            # gitignored, too large for git
+│   ├── latency/                 # JSON benchmark outputs (committed)
+│   ├── memory/                  # JSON benchmark outputs (committed)
+│   ├── throughput/               # JSON benchmark outputs (committed)
+│   └── figures/                 # PNG plots generated from the JSON above
 ├── tests/
-│ └── test_attention.py # correctness before benchmarking
+│   └── test_attention.py       # correctness before benchmarking
 └── README.md
-
+```
 
 ## Non-goals
 
