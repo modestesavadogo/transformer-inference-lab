@@ -1,104 +1,93 @@
-# Transformer Inference Lab
 
-**Research question:** How does attention architecture affect the memory–latency–quality trade-off during autoregressive language-model inference?
+Only the KV projection shrinks as `n_kv_head` drops — Q and output projections stay full size, so this is a *KV cache memory* optimization, not a general parameter-count reduction.
 
-Follow-up to [gpt2-speedrun](https://github.com/modestesavadogo/gpt2-speedrun). Where that project was about reproducing training, this one is about understanding *inference* well enough to explain, with measurements, why production LLM serving engines (vLLM, TensorRT-LLM) use techniques far more sophisticated than what's built here.
+| Variant | Hq | Hkv | KV cache vs MHA |
+|---|---|---|---|
+| MHA | 8 | 8 | 1× (baseline) |
+| GQA | 8 | 2 | 4× smaller |
+| MQA | 8 | 1 | 8× smaller |
 
-Everything below is built from scratch on top of a nanoGPT-style model: naive decoding → KV cache → MHA → GQA → MQA → memory/latency/quality analysis. FlashAttention and PagedAttention are read and discussed, not reimplemented — see [07 — Beyond](#07--beyond).
+Measured KV cache sizes (from `benchmarks/memory.py`) match this formula exactly at every context length tested — see [05 — Experiments](#05--experiments).
 
-**Status:** core experiments complete (training, latency, memory, throughput benchmarks for all three variants). See [BUILDLOG.md](BUILDLOG.md) for the full session-by-session history, including bugs hit and how they were resolved.
+References: Shazeer, *Fast Transformer Decoding: One Write-Head Is All You Need* (2019); Ainslie et al., *GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints* (2023).
 
-All training and benchmarking in this project was run on Kaggle (T4 GPU), not locally — see [Running on Kaggle](#running-on-kaggle) below.
+## 05 — Experiments
+
+*Latency / memory / throughput / quality.*
+
+All three checkpoints (MHA, GQA `n_kv_head=2`, MQA `n_kv_head=1`) were trained for 5000 iterations on 50M tokens (identical seed, data, and hyperparameters — see `configs/`), then benchmarked at context lengths 256/512/768 (capped below `block_size=1024` to leave room for generated tokens).
+
+**Memory** — KV cache size, measured vs. theoretical formula:
+
+| Context | MHA (bytes) | GQA (bytes) | MQA (bytes) | GQA ratio | MQA ratio |
+|---|---|---|---|---|---|
+| 256 | 2,949,120 | 737,280 | 368,640 | 4.00× | 8.00× |
+| 512 | 5,308,416 | 1,327,104 | 663,552 | 4.00× | 8.00× |
+| 768 | 7,667,712 | 1,916,928 | 958,464 | 4.00× | 8.00× |
+
+Measured and theoretical values are identical at every data point.
+
+![KV cache size vs context](results/figures/kv_cache_size.png)
+
+**Latency** (batch=1, mean ms/token):
+
+| Context | MHA | GQA | MQA |
+|---|---|---|---|
+| 256 | 4.93 | 5.41 | 5.69 |
+| 512 | 4.80 | 5.33 | 5.62 |
+| 768 | 4.76 | 5.75 | 5.25 |
+
+![Latency vs context](results/figures/latency_vs_context.png)
+
+**Throughput** (tokens/sec, context=512, sweeping batch size):
+
+| Batch | MHA | GQA | MQA |
+|---|---|---|---|
+| 1 | 108.7 | 97.0 | 96.5 |
+| 4 | 683.5 | 647.9 | 689.3 |
+| 8 | 1389.2 | 1219.9 | 1348.8 |
+| 16 | 2075.6 | 2068.5 | 2298.5 |
+| 32 | 2298.8 | 2319.0 | 3484.1 |
+| 64 | 2336.8 | 2334.7 | 3830.1 |
+
+No OOM occurred at any batch size tested, for any variant.
+
+![Throughput vs batch size](results/figures/throughput_vs_batch.png)
+
+**Quality** (val_loss at iteration 5000, single seed, single 5000-iteration run per variant):
+
+| Variant | val_loss |
+|---|---|
+| MHA | 5.6314 |
+| MQA | 5.6856 |
+| GQA | 5.7637 |
+
+## 06 — Analysis
+
+*The compromise observed.*
+
+The results split into two regimes that the single-sequence and batched benchmarks each expose separately.
+
+**Memory scales exactly as predicted, independent of everything else.** Across all three context lengths, GQA's KV cache is precisely 4× smaller than MHA's and MQA's is precisely 8× smaller — matching the `2 × n_kv_head × seq_len × head_dim × dtype_bytes` formula to the byte, with zero drift between the theoretical and measured allocator numbers. This is the one result in this project with no ambiguity: the architecture does exactly what it's supposed to do to the KV cache.
+
+**At batch size 1, MHA is consistently the fastest, not the slowest.** Latency stays essentially flat for MHA across all three context lengths (~4.8ms), while GQA and MQA are both 10-20% slower. The reason traces to the code, not noise: MHA's `repeat_kv` operation takes a no-op fast path when `n_kv_head == n_head` (`n_rep == 1`), while GQA and MQA both pay a real broadcast cost (`expand` + `reshape`) on every forward pass to bring their smaller KV tensor up to the query head count. At this model size (28-30M parameters) and batch size 1, that broadcast cost outweighs any benefit from reading less cache memory — the GPU simply isn't memory-bandwidth-bound at this scale, so a smaller cache has no bandwidth savings to offer against a real per-step compute overhead.
+
+**At high batch size, the picture reverses — but only for MQA, not GQA.** By batch=64, MQA reaches 3830 tokens/sec, a 64% improvement over MHA and GQA, both of which plateau around 2335 tokens/sec. This is the regime the KV-cache-size argument for GQA/MQA is actually built for: total memory traffic scales with `batch_size × kv_cache_bytes`, and once batch size is large enough, that traffic — not the fixed broadcast cost — becomes the bottleneck. MQA's 8× smaller cache produces a corresponding real speedup once that threshold is crossed.
+
+GQA does not show this effect at any batch size tested, despite having a 4× smaller cache than MHA. Two explanations are consistent with the data, and this dataset cannot distinguish between them: (1) GQA's `n_rep=4` broadcast is a real cost MHA doesn't pay at all, and a 4× bandwidth reduction may not be large enough at this model's scale to offset it, while MQA's 8× reduction is; or (2) there may be a bandwidth threshold specific to this model size and T4 hardware that a 4× reduction doesn't cross but an 8× reduction does. Distinguishing these would require testing intermediate `n_kv_head` values (e.g. 4) or a larger base model, which is outside this project's scope.
+
+**No OOM was observed at any batch size tested (up to 64), for any variant.** The original motivation for GQA/MQA — avoiding out-of-memory errors under large batch serving — didn't materialize here because the model is small enough (peak KV cache at batch=64 is 339MB for MHA) that it stays far under a T4's 15GB budget regardless of attention variant. The throughput advantage is real and measurable, but the specific "prevents OOM" framing common in production discussions doesn't apply at this scale; what's observable instead is the more precise underlying mechanism — bandwidth-bound throughput — that the OOM framing is usually standing in for.
+
+**Quality differences are small and not cleanly ordered by architecture.** MHA (5.6314) edges out MQA (5.6856), which edges out GQA (5.7637) — GQA, not MQA, has the worst quality of the three, the opposite of the naive expectation that fewer KV heads should monotonically hurt quality. This is most plausibly training noise at this budget: a single seed, 5000 iterations, 50M tokens is a small run, and a ~0.13 val_loss spread across three runs this short shouldn't be read as a reliable architectural ranking without repeated seeds. This is a genuine limitation of the study as run, not a hidden or overlooked issue — stated here rather than smoothed over.
+
+**Overall:** this dataset supports a real, specific, and narrower claim than "GQA/MQA are strictly better." At this model scale, the correct summary is: attention-variant choice barely matters for single-sequence (batch=1) latency, where the broadcast overhead of any non-MHA variant is a real cost that a smaller cache doesn't yet offset; it starts to matter substantially for throughput once batch size grows large enough to be bandwidth-bound, but only the more aggressive reduction (MQA) showed the benefit at the batch sizes tested here — GQA's intermediate reduction did not. Production serving engines targeting high concurrent batch sizes are exactly the regime where this trade-off pays off, which is consistent with why GQA/MQA are standard there rather than for single-request low-latency serving.
+
+## 07 — Beyond
+
+*FlashAttention, PagedAttention, vLLM.*
+
+> TODO: not implemented here — read for what they say about memory bandwidth and IO-awareness, then explain in your own words where this repo's naive pre-allocated cache breaks down (fragmentation, no batching across requests, no fused kernels) and how each technique addresses a specific piece of that. Section 06's finding that GQA/MQA's broadcast overhead can outweigh their bandwidth savings at small batch is a natural bridge here: FlashAttention-style fused kernels avoid materializing the repeated KV tensor at all, which is precisely the cost identified above.
 
 ---
 
-## Setup
-
-```bash
-git clone https://github.com/modestesavadogo/transformer-inference-lab.git
-cd transformer-inference-lab
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pytest tests/  # correctness checks before trusting any benchmark
-```
-
-## Running on Kaggle
-
-Training and all benchmarks in this repo were run as Kaggle notebooks (T4 GPU), not locally — a full training run takes ~2.5-3h per variant, impractical without a dedicated GPU.
-
-1. **Data:** `prepare_data.py` streams FineWeb-Edu and tokenizes with tiktoken's `gpt2` encoding, writing `train.bin`/`val.bin` (uint16 memmap arrays). On Kaggle, generate once and save as a reusable Dataset:
-```bash
-   python prepare_data.py --num_tokens 50_000_000 --out_dir data
-```
-2. **Training:** one notebook per variant (`configs/mha.yaml`, `gqa.yaml`, `mqa.yaml`), each producing a checkpoint saved to a shared Kaggle Dataset for reuse across sessions.
-3. **Benchmarks:** a separate notebook loads all three checkpoints and runs `benchmarks/latency.py`, `memory.py`, `throughput.py` across each.
-
-**Known constraint:** `context_length + max_new_tokens` must stay at or below `block_size` (1024 for these checkpoints) — positions beyond `block_size` don't exist in the position embedding table. Exceeding it triggers a CUDA device-side assert that **poisons the CUDA context for the rest of the process** (a kernel/session restart is required, not just a retry). All commands in this README use values that respect this constraint.
-
-## Reproducing results
-
-Every number in this README comes from a command you can re-run. Benchmark scripts must be run with `-m` (module syntax), not as a direct file path, since they use package-relative imports:
-
-```bash
-python -m benchmarks.latency \
-    --attention gqa \
-    --kv-heads 2 \
-    --context-length 512 \
-    --max-new-tokens 128 \
-    --checkpoint results/checkpoints/gqa.pt \
-    --out results/latency/gqa_ctx512.json \
-    --device cuda
-
-python -m benchmarks.throughput \
-    --attention mqa --kv-heads 1 \
-    --context-length 512 --max-new-tokens 64 \
-    --checkpoint results/checkpoints/mqa.pt \
-    --batch-sizes 1,4,8,16,32,64 \
-    --device cuda
-
-python -m benchmarks.memory \
-    --attention mha --kv-heads 8 \
-    --context-lengths 256,512,768 \
-    --checkpoint results/checkpoints/mha.pt \
-    --device cuda
-
-python analysis/plots.py --results-dir results/ --out-dir results/figures/
-```
-
-Training the three attention variants (see [04](#04--mha--gqa--mqa) for why they're trained from scratch rather than sliced from one checkpoint):
-
-```bash
-python train.py --config configs/mha.yaml --device cuda
-python train.py --config configs/gqa.yaml --device cuda
-python train.py --config configs/mqa.yaml --device cuda
-```
-
-`configs/{mha,gqa,mqa}.yaml` are identical except for `n_kv_head` — same seed, same token budget, same data — so quality differences in the results below are attributable to architecture, not training discrepancy.
-
----
-
-## 01 — Problem
-
-*Why autoregressive inference costs what it costs.*
-
-Naive decoding recomputes attention over the entire prefix at every generation step, making total compute across a full generation O(T²) in sequence length T — each new token re-processes every token that came before it, even though most of that work was already done in the previous step.
-
-Measured on the MHA checkpoint (context length 512, 64 generated tokens): **15.48ms/token** with naive decoding. Section 03 shows what caching that redundant work buys back.
-
-## 02 — Baseline
-
-*Naive decoding, no cache.*
-
-`src/inference/naive.py`, MHA checkpoint, context length 512, 64 generated tokens: **15.48ms/token** mean latency. This is the reference every later number in this README is compared against.
-
-## 03 — KV Cache
-
-*Implementation + benchmark.*
-
-`src/inference/kv_cache.py`, same MHA checkpoint, same context length: **4.80ms/token**, a **3.2× speedup** over naive decoding. Avoiding recomputation of already-processed positions is the single largest lever in this project — independent of which attention variant is used, since all three benefit from caching equally at the mechanism level.
-
-## 04 — MHA / GQA / MQA
-
-*Implementations + theory.*
-
-Formula for one layer's KV cache size (see `attention.py: kv_cache_bytes`):
+## Repo structure
