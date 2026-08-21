@@ -6,7 +6,9 @@ Follow-up to [gpt2-speedrun](https://github.com/modestesavadogo/gpt2-speedrun). 
 
 Everything below is built from scratch on top of a nanoGPT-style model: naive decoding → KV cache → MHA → GQA → MQA → memory/latency/quality analysis. FlashAttention and PagedAttention are read and discussed, not reimplemented — see [07 — Beyond](#07--beyond).
 
-Status: 🚧 in progress, updated as I go. See `results/` for current numbers.
+**Status:** core experiments complete (training, latency, memory, throughput benchmarks for all three variants). See [BUILDLOG.md](BUILDLOG.md) for the full session-by-session history, including bugs hit and how they were resolved.
+
+All training and benchmarking in this project was run on Kaggle (T4 GPU), not locally — see [Running on Kaggle](#running-on-kaggle) below.
 
 ---
 
@@ -20,24 +22,45 @@ pip install -r requirements.txt
 pytest tests/  # correctness checks before trusting any benchmark
 ```
 
+## Running on Kaggle
+
+Training and all benchmarks in this repo were run as Kaggle notebooks (T4 GPU), not locally — a full training run takes ~2.5-3h per variant, impractical without a dedicated GPU.
+
+1. **Data:** `prepare_data.py` streams FineWeb-Edu and tokenizes with tiktoken's `gpt2` encoding, writing `train.bin`/`val.bin` (uint16 memmap arrays). On Kaggle, generate once and save as a reusable Dataset:
+```bash
+   python prepare_data.py --num_tokens 50_000_000 --out_dir data
+```
+2. **Training:** one notebook per variant (`configs/mha.yaml`, `gqa.yaml`, `mqa.yaml`), each producing a checkpoint saved to a shared Kaggle Dataset for reuse across sessions.
+3. **Benchmarks:** a separate notebook loads all three checkpoints and runs `benchmarks/latency.py`, `memory.py`, `throughput.py` across each.
+
+**Known constraint:** `context_length + max_new_tokens` must stay at or below `block_size` (1024 for these checkpoints) — positions beyond `block_size` don't exist in the position embedding table. Exceeding it triggers a CUDA device-side assert that **poisons the CUDA context for the rest of the process** (a kernel/session restart is required, not just a retry). All commands in this README use values that respect this constraint.
+
 ## Reproducing results
 
-Every number in this README comes from a command you can re-run:
+Every number in this README comes from a command you can re-run. Benchmark scripts must be run with `-m` (module syntax), not as a direct file path, since they use package-relative imports:
 
 ```bash
-python benchmarks/latency.py \
+python -m benchmarks.latency \
     --attention gqa \
     --kv-heads 2 \
-    --context-length 2048 \
+    --context-length 512 \
+    --max-new-tokens 128 \
     --checkpoint results/checkpoints/gqa.pt \
-    --out results/latency/gqa_ctx2048.json
+    --out results/latency/gqa_ctx512.json \
+    --device cuda
 
-python benchmarks/throughput.py --attention mqa --kv-heads 1 \
-    --context-length 2048 --checkpoint results/checkpoints/mqa.pt \
-    --batch-sizes 1,4,8,16,32
+python -m benchmarks.throughput \
+    --attention mqa --kv-heads 1 \
+    --context-length 512 --max-new-tokens 64 \
+    --checkpoint results/checkpoints/mqa.pt \
+    --batch-sizes 1,4,8,16,32,64 \
+    --device cuda
 
-python benchmarks/memory.py --attention mha --kv-heads 8 \
-    --context-lengths 512,1024,2048,4096 --checkpoint results/checkpoints/mha.pt
+python -m benchmarks.memory \
+    --attention mha --kv-heads 8 \
+    --context-lengths 256,512,768 \
+    --checkpoint results/checkpoints/mha.pt \
+    --device cuda
 
 python analysis/plots.py --results-dir results/ --out-dir results/figures/
 ```
@@ -45,9 +68,9 @@ python analysis/plots.py --results-dir results/ --out-dir results/figures/
 Training the three attention variants (see [04](#04--mha--gqa--mqa) for why they're trained from scratch rather than sliced from one checkpoint):
 
 ```bash
-python train.py --config configs/mha.yaml
-python train.py --config configs/gqa.yaml
-python train.py --config configs/mqa.yaml
+python train.py --config configs/mha.yaml --device cuda
+python train.py --config configs/gqa.yaml --device cuda
+python train.py --config configs/mqa.yaml --device cuda
 ```
 
 `configs/{mha,gqa,mqa}.yaml` are identical except for `n_kv_head` — same seed, same token budget, same data — so quality differences in the results below are attributable to architecture, not training discrepancy.
@@ -58,93 +81,24 @@ python train.py --config configs/mqa.yaml
 
 *Why autoregressive inference costs what it costs.*
 
-> TODO: naive decoding is O(T²) in total compute across a full generation because every step recomputes attention over the entire prefix. Fill in with the actual per-token / total FLOPs derivation and a first plot from `benchmarks/latency.py --no-cache`.
+Naive decoding recomputes attention over the entire prefix at every generation step, making total compute across a full generation O(T²) in sequence length T — each new token re-processes every token that came before it, even though most of that work was already done in the previous step.
+
+Measured on the MHA checkpoint (context length 512, 64 generated tokens): **15.48ms/token** with naive decoding. Section 03 shows what caching that redundant work buys back.
 
 ## 02 — Baseline
 
 *Naive decoding, no cache.*
 
-> TODO: `src/inference/naive.py` benchmark numbers — latency/token, throughput, memory, across context length. This is the reference every later number gets compared against.
+`src/inference/naive.py`, MHA checkpoint, context length 512, 64 generated tokens: **15.48ms/token** mean latency. This is the reference every later number in this README is compared against.
 
 ## 03 — KV Cache
 
 *Implementation + benchmark.*
 
-> TODO: `src/inference/kv_cache.py` vs `naive.py`, same model/prompt/sampling. Report speedup factor and where it plateaus (memory bandwidth, not compute, becomes the bottleneck — set this up for section 07).
+`src/inference/kv_cache.py`, same MHA checkpoint, same context length: **4.80ms/token**, a **3.2× speedup** over naive decoding. Avoiding recomputation of already-processed positions is the single largest lever in this project — independent of which attention variant is used, since all three benefit from caching equally at the mechanism level.
 
 ## 04 — MHA / GQA / MQA
 
 *Implementations + theory.*
 
 Formula for one layer's KV cache size (see `attention.py: kv_cache_bytes`):
-
-```
-2 (K and V) × n_kv_head × seq_len × head_dim × dtype_bytes
-```
-
-Only the KV projection shrinks as `n_kv_head` drops — Q and output projections stay full size, so this is a *KV cache memory* optimization, not a general parameter-count reduction.
-
-| Variant | Hq | Hkv | KV cache vs MHA |
-|---|---|---|---|
-| MHA | 8 | 8 | 1× (baseline) |
-| GQA | 8 | 2 | 4× smaller |
-| MQA | 8 | 1 | 8× smaller |
-
-> TODO: measured KV cache sizes from `benchmarks/memory.py`, confirming the formula against real allocator numbers.
-
-References: Shazeer, *Fast Transformer Decoding: One Write-Head Is All You Need* (2019); Ainslie et al., *GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints* (2023).
-
-## 05 — Experiments
-
-*Latency / memory / throughput / perplexity.*
-
-> TODO: full grid — attention variant × context length (and batch size for throughput) — plus held-out perplexity per variant. Eval split kept strictly separate from training data.
-
-## 06 — Analysis
-
-*The compromise observed.*
-
-> TODO: this is the section that makes the repo a study rather than a demo. State plainly what the memory↔latency↔quality triangle looks like in the actual numbers, and where it agrees or disagrees with the GQA paper's reported trade-off.
-
-## 07 — Beyond
-
-*FlashAttention, PagedAttention, vLLM.*
-
-> TODO: not implemented here — read for what they say about memory bandwidth and IO-awareness, then explain in your own words where this repo's naive pre-allocated cache breaks down (fragmentation, no batching across requests, no fused kernels) and how each technique addresses a specific piece of that.
-
----
-
-## Repo structure
-
-```
-transformer-inference-lab/
-├── src/
-│   ├── model/
-│   │   ├── attention.py     # MHA/GQA/MQA as one parameterized module
-│   │   ├── transformer.py   # GPT wrapper, nanoGPT-speedrun-adjacent
-│   │   └── cache.py         # KV cache storage/bookkeeping only
-│   └── inference/
-│       ├── naive.py         # no-cache baseline
-│       ├── kv_cache.py      # prefill + incremental decode with cache
-│       └── generation.py    # shared sampling utils, perplexity eval
-├── experiments/
-│   ├── kv_cache/
-│   ├── mha_mqa_gqa/
-│   └── context_length/
-├── benchmarks/
-│   ├── latency.py
-│   ├── throughput.py
-│   └── memory.py
-├── analysis/
-│   └── plots.py
-├── configs/                 # mha.yaml / gqa.yaml / mqa.yaml — identical
-│                             # except n_kv_head
-├── results/                 # JSON outputs + figures (checkpoints gitignored)
-├── tests/
-│   └── test_attention.py    # correctness before benchmarking
-└── README.md
-```
-
-## Non-goals
-
-This does not aim to match vLLM or TensorRT-LLM performance. The goal is a small enough engine to understand every operation, then measure experimentally why industrial engines reach for more sophisticated techniques.
