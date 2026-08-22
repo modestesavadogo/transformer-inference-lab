@@ -62,6 +62,11 @@ No OOM occurred at any batch size tested, for any variant.
 | MQA | 5.6856 |
 | GQA | 5.7637 |
 
+
+The exact notebooks used are in [`notebooks/`](notebooks/), for reference — outputs cleared before committing:
+- `mha-training.ipynb`, `gqa-training.ipynb`, `mqa-training.ipynb` — training runs
+- `benchmarks.ipynb` — latency/memory/throughput benchmarks for all three variants; also includes a checkpoint-recovery step (a `kaggle datasets version` bug had overwritten earlier checkpoints instead of merging them — see BUILDLOG.md for the full story)
+
 ## 06 — Analysis
 
 *The compromise observed.*
